@@ -88,7 +88,7 @@ object BlobStoreServerMain extends ServerMain {
   override def services: ServiceList[Any] = ServiceList.add(new BlobStoreService())
 
   // Custom server configuration
-  override def serverBuilder: ZIO[Any, Throwable, ServerBuilder[_]] = {
+  def serverBuilder: ZIO[Any, Throwable, ServerBuilder[_]] = {
     ZIO.attempt(
       ServerBuilder
         .forPort(port)
