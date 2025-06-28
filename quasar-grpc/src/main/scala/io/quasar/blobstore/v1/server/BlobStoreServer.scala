@@ -89,7 +89,7 @@ object BlobStoreServerMain extends ServerMain {
 
   // Custom server configuration
   override def serverBuilder: ZIO[Any, Throwable, ServerBuilder[_]] = {
-    ZIO.succeed(
+    ZIO.attempt(
       ServerBuilder
         .forPort(port)
         .maxInboundMessageSize(4 * 1024 * 1024) // 4MB max message size
@@ -98,7 +98,7 @@ object BlobStoreServerMain extends ServerMain {
   }
 
   // Add custom logging and lifecycle hooks
-  override def serverWillStart: ZIO[Any, Throwable, Unit] = {
+  def serverWillStart: ZIO[Any, Throwable, Unit] = {
     ZIO.logInfo(s"BlobStore gRPC server starting on port $port") *>
     ZIO.logInfo("Service endpoints:") *>
     ZIO.logInfo("- CreateUploadSession: Creates a new upload session") *>
@@ -111,7 +111,7 @@ object BlobStoreServerMain extends ServerMain {
     ZIO.logInfo("- GetMetadata: Retrieves blob metadata")
   }
 
-  override def serverDidStart: ZIO[Any, Throwable, Unit] = {
+  def serverDidStart: ZIO[Any, Throwable, Unit] = {
     ZIO.logInfo(s"BlobStore gRPC server started successfully on port $port") *>
     ZIO.logInfo("Server is ready to accept connections")
   }
