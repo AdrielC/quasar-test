@@ -6,7 +6,18 @@ import zio.*
 import zio.test.*
 import zio.test.Assertion.*
 import zio.stream.*
-import com.google.protobuf.timestamp.Timestamp
+
+
+given Conversion[com.google.protobuf.timestamp.Timestamp, Timestamp] = Timestamp.apply
+given Conversion[com.google.protobuf.ByteString, ByteString] = ByteString.apply
+given Conversion[com.google.protobuf.Empty, Empty] = Empty.apply
+given Conversion[com.google.protobuf.BoolValue, Boolean] = BoolValue.apply
+given Conversion[com.google.protobuf.Int32Value, Int] = Int32Value.apply
+given Conversion[com.google.protobuf.Int64Value, Long] = Int64Value.apply
+given Conversion[com.google.protobuf.FloatValue, Float] = FloatValue.apply
+given Conversion[com.google.protobuf.DoubleValue, Double] = DoubleValue.apply
+given Conversion[com.google.protobuf.StringValue, String] = StringValue.apply
+
 
 object BlobStoreServiceSpec extends ZIOSpecDefault {
 

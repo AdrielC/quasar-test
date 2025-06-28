@@ -5,7 +5,6 @@ import io.grpc.Status
 import zio.*
 import zio.stream.*
 import java.security.MessageDigest
-import com.google.protobuf.timestamp.Timestamp
 import scala.collection.concurrent.TrieMap
 
 /**
@@ -59,17 +58,18 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
       
     } yield CreateUploadSessionResponse(
       CreateUploadSessionResponse.Result.Session(session)
-    )).catchAll(error => 
-      ZIO.succeed(CreateUploadSessionResponse(
-        CreateUploadSessionResponse.Result.Error(createInternalError(s"Session creation failed: ${error.toString}"))
-      ))
-    )
+    ))
+    // .catchAll(error => 
+    //   ZIO.succeed(CreateUploadSessionResponse(
+    //     CreateUploadSessionResponse.Result.Error(createInternalError(s"Session creation failed: ${error.toString}"))
+    //   ))
+    // )
   }
 
   override def validateSession(
     request: ValidateSessionRequest
   ): IO[io.grpc.StatusException, ValidateSessionResponse] = {
-    ZIO.succeed {
+    ZIO.attempt {
       sessions.get(request.sessionId) match {
         case Some(session) if isSessionValid(session) =>
           ValidateSessionResponse(
@@ -90,11 +90,11 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
             ))
           )
       }
-    }
+    }.refineToOrDie[io.grpc.StatusException]
   }
 
   override def uploadBlob(
-    request: ZStream[io.grpc.StatusException, BlobChunk]
+    request: ZStream[Any, io.grpc.StatusException, BlobChunk]
   ): IO[io.grpc.StatusException, UploadBlobResponse] = {
     request.runCollect.flatMap { chunks =>
       if (chunks.isEmpty) {
@@ -134,7 +134,7 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
 
   override def downloadBlob(
     request: DownloadBlobRequest
-  ): ZStream[io.grpc.StatusException, BlobChunk] = {
+  ): ZStream[Any, io.grpc.StatusException, BlobChunk] = {
     val blobKey = getBlobKey(request.address)
     
     ZStream.fromZIO {
@@ -161,7 +161,7 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
   ): IO[io.grpc.StatusException, BlobInfo] = {
     val blobKey = getBlobKey(request.address)
     
-    ZIO.succeed {
+    ZIO.attempt {
       blobs.get(blobKey) match {
         case Some(storedBlob) =>
           val metadata = blobMetadata.getOrElse(blobKey, Map.empty)
@@ -179,7 +179,8 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
         case None =>
           throw io.grpc.StatusException(Status.NOT_FOUND.withDescription("Blob not found"))
       }
-    }.catchAll(error =>
+    }
+    .catchAll(error =>
       ZIO.fail(io.grpc.StatusException(Status.INTERNAL.withDescription(s"Get blob info failed: ${error.toString}")))
     )
   }
@@ -187,7 +188,7 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
   override def deleteBlob(
     request: DeleteBlobRequest
   ): IO[io.grpc.StatusException, DeleteBlobResponse] = {
-    ZIO.succeed {
+    ZIO.attempt {
       val blobKey = getBlobKey(request.address)
       
       blobs.get(blobKey) match {
@@ -208,7 +209,8 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
             ))
           )
       }
-    }.catchAll(error =>
+    }
+    .catchAll(error =>
       ZIO.succeed(DeleteBlobResponse(
         DeleteBlobResponse.Result.Error(createInternalError(s"Delete failed: ${error.toString}"))
       ))
@@ -218,7 +220,7 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
   override def updateMetadata(
     request: UpdateMetadataRequest
   ): IO[io.grpc.StatusException, UpdateMetadataResponse] = {
-    ZIO.succeed {
+    ZIO.attempt {
       val blobKey = getBlobKey(request.address)
       
       blobs.get(blobKey) match {
@@ -242,7 +244,9 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
             ))
           )
       }
-    }.catchAll(error =>
+    }
+    .refineToOrDie[io.grpc.StatusException]
+    .catchAll(error =>
       ZIO.succeed(UpdateMetadataResponse(
         UpdateMetadataResponse.Result.Error(createInternalError(s"Update metadata failed: ${error.toString}"))
       ))
@@ -252,7 +256,7 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
   override def getMetadata(
     request: GetMetadataRequest
   ): IO[io.grpc.StatusException, MetadataResponse] = {
-    ZIO.succeed {
+    ZIO.attempt {
       val blobKey = getBlobKey(request.address)
       
       blobs.get(blobKey) match {
@@ -268,7 +272,9 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
         case None =>
           throw io.grpc.StatusException(Status.NOT_FOUND.withDescription("Blob not found"))
       }
-    }.catchAll(error =>
+    }
+    .refineToOrDie[io.grpc.StatusException]
+    .catchAll(error =>
       ZIO.fail(io.grpc.StatusException(Status.INTERNAL.withDescription(s"Get metadata failed: ${error.toString}")))
     )
   }
