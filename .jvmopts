@@ -1,0 +1,25 @@
+# JVM options for SBT
+# Increase heap size for large builds
+-Xmx4G
+-Xms1G
+
+# Increase Metaspace for class metadata (especially important for Scala 3 + ScalaPB)
+-XX:MetaspaceSize=512M
+-XX:MaxMetaspaceSize=1G
+
+# Improve GC performance
+-XX:+UseG1GC
+-XX:+UseStringDeduplication
+
+# Improve compilation performance
+-XX:+TieredCompilation
+-XX:ReservedCodeCacheSize=256M
+
+# Better error reporting
+-XX:+HeapDumpOnOutOfMemoryError
+-XX:HeapDumpPath=./heap-dump.hprof
+
+# Enable modern JVM features (Java 21)
+--add-opens=java.base/java.lang=ALL-UNNAMED
+--add-opens=java.base/java.util=ALL-UNNAMED
+--add-opens=java.base/sun.nio.ch=ALL-UNNAMED 

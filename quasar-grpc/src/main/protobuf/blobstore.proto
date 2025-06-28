@@ -1,0 +1,318 @@
+syntax = "proto3";
+
+package io.quasar.blobstore.v1;
+
+option java_multiple_files = true;
+option java_package = "io.quasar.blobstore.v1";
+option java_outer_classname = "BlobStoreProto";
+option objc_class_prefix = "QBS";
+
+// Content Addressable Blob Storage Service
+service BlobStore {
+  // Session Management
+  rpc CreateUploadSession (CreateUploadSessionRequest) returns (CreateUploadSessionResponse);
+  rpc ValidateSession (ValidateSessionRequest) returns (ValidateSessionResponse);
+  
+  // Blob Operations
+  rpc UploadBlob (stream BlobChunk) returns (UploadBlobResponse);
+  rpc DownloadBlob (DownloadBlobRequest) returns (stream BlobChunk);
+  rpc GetBlobInfo (GetBlobInfoRequest) returns (BlobInfo);
+  rpc DeleteBlob (DeleteBlobRequest) returns (DeleteBlobResponse);
+  
+  // Metadata Operations
+  rpc UpdateMetadata (UpdateMetadataRequest) returns (UpdateMetadataResponse);
+  rpc GetMetadata (GetMetadataRequest) returns (MetadataResponse);
+}
+
+// ===== CORE DOMAIN TYPES =====
+
+// Timestamp representation
+message Timestamp {
+  int64 seconds = 1;  // seconds since Unix epoch
+  int32 nanos = 2;    // nanoseconds within the second
+}
+
+// JSON-like structure for metadata
+message JsonValue {
+  oneof kind {
+    NullValue null_value = 1;
+    double number_value = 2;
+    string string_value = 3;
+    bool bool_value = 4;
+    JsonStruct struct_value = 5;
+    JsonList list_value = 6;
+  }
+}
+
+enum NullValue {
+  NULL_VALUE = 0;
+}
+
+message JsonStruct {
+  map<string, JsonValue> fields = 1;
+}
+
+message JsonList {
+  repeated JsonValue values = 1;
+}
+
+// Content addressing - the heart of CAS
+message BlobAddress {
+  HashAlgorithm algorithm = 1;
+  string hash = 2; // hex-encoded hash value
+}
+
+enum HashAlgorithm {
+  HASH_ALGORITHM_UNSPECIFIED = 0;
+  HASH_ALGORITHM_SHA256 = 1;
+  HASH_ALGORITHM_SHA512 = 2;
+  HASH_ALGORITHM_BLAKE3 = 3;
+}
+
+// Blob encoding and compression
+message BlobEncoding {
+  CompressionType compression = 1;
+  TransferEncoding transfer = 2;
+}
+
+enum CompressionType {
+  COMPRESSION_TYPE_UNSPECIFIED = 0;
+  COMPRESSION_TYPE_NONE = 1;
+  COMPRESSION_TYPE_GZIP = 2;
+  COMPRESSION_TYPE_ZSTD = 3;
+  COMPRESSION_TYPE_BROTLI = 4;
+  COMPRESSION_TYPE_LZ4 = 5;
+}
+
+enum TransferEncoding {
+  TRANSFER_ENCODING_UNSPECIFIED = 0;
+  TRANSFER_ENCODING_IDENTITY = 1;
+  TRANSFER_ENCODING_BASE64 = 2;
+  TRANSFER_ENCODING_CHUNKED = 3;
+}
+
+// Complete blob descriptor
+message BlobDescriptor {
+  string name = 1;                              // Original filename/identifier
+  string content_type = 2;                      // MIME type
+  uint64 size_bytes = 3;                        // Size in bytes
+  BlobEncoding encoding = 4;                    // Encoding information
+  BlobAddress canonical_address = 5;            // CAS key (normalized)
+  BlobAddress original_address = 6;             // Original content hash
+  Timestamp created_at = 7;                     // Creation timestamp
+  repeated string tags = 8;                     // Searchable tags
+}
+
+// ===== METADATA & SCHEMAS =====
+
+// Schema for metadata validation
+message Schema {
+  string id = 1;                    // Unique schema identifier
+  SchemaType type = 2;              // Schema format
+  string definition = 3;            // Schema definition
+  string version = 4;               // Schema version
+}
+
+enum SchemaType {
+  SCHEMA_TYPE_UNSPECIFIED = 0;
+  SCHEMA_TYPE_JSON_SCHEMA = 1;
+  SCHEMA_TYPE_AVRO = 2;
+  SCHEMA_TYPE_PROTOBUF = 3;
+}
+
+// Namespaced metadata with validation
+message Metadata {
+  string namespace = 1;                         // Metadata namespace
+  JsonStruct data = 2;                          // JSON metadata
+  optional Schema schema = 3;                   // Validation schema
+  Timestamp updated_at = 4;                     // Last update time
+  string updated_by = 5;                        // Who updated it
+}
+
+// ===== AUTHENTICATION & SESSIONS =====
+
+message Principal {
+  string id = 1;                    // Principal identifier
+  PrincipalType type = 2;           // Type of principal
+  repeated string permissions = 3;   // Granted permissions
+}
+
+enum PrincipalType {
+  PRINCIPAL_TYPE_UNSPECIFIED = 0;
+  PRINCIPAL_TYPE_USER = 1;
+  PRINCIPAL_TYPE_SERVICE = 2;
+  PRINCIPAL_TYPE_SYSTEM = 3;
+}
+
+message UploadSession {
+  string session_id = 1;                        // Unique session ID
+  Principal principal = 2;                      // Who owns this session
+  BlobDescriptor expected_blob = 3;             // Expected blob properties
+  SessionConfig config = 4;                    // Session configuration
+  Timestamp expires_at = 5;                    // When session expires
+  SessionState state = 6;                      // Current session state
+}
+
+enum SessionState {
+  SESSION_STATE_UNSPECIFIED = 0;
+  SESSION_STATE_ACTIVE = 1;
+  SESSION_STATE_COMPLETED = 2;
+  SESSION_STATE_EXPIRED = 3;
+  SESSION_STATE_CANCELLED = 4;
+}
+
+message SessionConfig {
+  uint64 chunk_size_bytes = 1;                     // Recommended chunk size
+  repeated TransferEncoding accepted_encodings = 2; // Accepted transfer encodings
+  bool validate_checksums = 3;                     // Whether to validate checksums
+  uint32 max_chunks = 4;                           // Maximum number of chunks
+  uint64 max_blob_size_bytes = 5;                  // Maximum blob size
+}
+
+// ===== BLOB OPERATIONS =====
+
+message CreateUploadSessionRequest {
+  Principal principal = 1;                      // Who is uploading
+  BlobDescriptor blob = 2;                      // Blob to upload
+  map<string, Metadata> metadata = 3;          // Associated metadata
+  optional SessionConfig config = 4;           // Session preferences
+}
+
+message CreateUploadSessionResponse {
+  oneof result {
+    UploadSession session = 1;
+    Error error = 2;
+  }
+}
+
+message ValidateSessionRequest {
+  string session_id = 1;
+}
+
+message ValidateSessionResponse {
+  oneof result {
+    UploadSession session = 1;
+    Error error = 2;
+  }
+}
+
+message BlobChunk {
+  string session_id = 1;                       // Session this chunk belongs to
+  uint64 sequence_number = 2;                  // Chunk sequence (0-based)
+  uint64 offset_bytes = 3;                     // Byte offset in original blob
+  bytes data = 4;                              // Chunk data
+  optional BlobEncoding encoding = 5;          // Chunk-specific encoding
+  optional string checksum = 6;                // Chunk checksum
+  ChunkFlags flags = 7;                        // Chunk metadata
+}
+
+message ChunkFlags {
+  bool is_final = 1;                           // Last chunk in sequence
+  bool is_compressed = 2;                      // Chunk is compressed
+  bool requires_validation = 3;                // Requires checksum validation
+}
+
+message UploadBlobResponse {
+  oneof result {
+    BlobInfo info = 1;
+    Error error = 2;
+  }
+}
+
+message DownloadBlobRequest {
+  BlobAddress address = 1;                     // Blob to download
+  Principal principal = 2;                     // Who is downloading
+  optional BlobEncoding preferred_encoding = 3; // Preferred encoding
+  bool include_metadata = 4;                   // Include metadata in response
+  optional ByteRange range = 5;                // Optional byte range
+}
+
+message ByteRange {
+  uint64 start = 1;                            // Start byte (inclusive)
+  optional uint64 end = 2;                     // End byte (inclusive), omit for rest of blob
+}
+
+message GetBlobInfoRequest {
+  BlobAddress address = 1;
+  Principal principal = 2;
+}
+
+message BlobInfo {
+  BlobDescriptor descriptor = 1;               // Blob properties
+  map<string, Metadata> metadata = 2;         // Associated metadata
+  AccessInfo access = 3;                      // Access statistics
+}
+
+message AccessInfo {
+  Timestamp last_accessed = 1;                 // Last access time
+  uint64 access_count = 2;                     // Total access count
+  repeated string accessed_by = 3;             // Recent accessors
+}
+
+message DeleteBlobRequest {
+  BlobAddress address = 1;
+  Principal principal = 2;
+  bool force = 3;                              // Force delete even if referenced
+}
+
+message DeleteBlobResponse {
+  oneof result {
+    DeleteResult delete_result = 1;
+    Error error = 2;
+  }
+}
+
+message DeleteResult {
+  bool deleted = 1;                            // Whether blob was deleted
+  string message = 2;                          // Status message
+}
+
+// ===== METADATA OPERATIONS =====
+
+message UpdateMetadataRequest {
+  BlobAddress address = 1;
+  Principal principal = 2;
+  map<string, Metadata> metadata = 3;
+  bool merge_mode = 4;                         // true = merge, false = replace
+}
+
+message UpdateMetadataResponse {
+  oneof result {
+    MetadataResponse metadata = 1;
+    Error error = 2;
+  }
+}
+
+message GetMetadataRequest {
+  BlobAddress address = 1;
+  Principal principal = 2;
+  repeated string namespaces = 3;              // Filter by namespaces
+}
+
+message MetadataResponse {
+  map<string, Metadata> metadata = 1;
+}
+
+// ===== ERROR HANDLING =====
+
+message Error {
+  ErrorCode code = 1;                          // Error category
+  string message = 2;                          // Human-readable message
+  map<string, string> details = 3;             // Additional error context
+  optional string trace_id = 4;                // Request trace ID
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_INVALID_REQUEST = 1;
+  ERROR_CODE_UNAUTHORIZED = 2;
+  ERROR_CODE_FORBIDDEN = 3;
+  ERROR_CODE_NOT_FOUND = 4;
+  ERROR_CODE_CONFLICT = 5;
+  ERROR_CODE_BLOB_TOO_LARGE = 6;
+  ERROR_CODE_INVALID_CHECKSUM = 7;
+  ERROR_CODE_SESSION_EXPIRED = 8;
+  ERROR_CODE_QUOTA_EXCEEDED = 9;
+  ERROR_CODE_STORAGE_ERROR = 10;
+  ERROR_CODE_INTERNAL_ERROR = 11;
+} 

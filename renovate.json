@@ -1,0 +1,13 @@
+{
+    "extends": [
+      "config:base",
+      "github>zio/zio-renovate-config:renovate"
+    ],
+    "packageRules": [
+      {
+        "matchBaseBranches": [
+          "main"
+        ]
+      }
+    ]
+  }
