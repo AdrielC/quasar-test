@@ -4,17 +4,12 @@ FROM mcr.microsoft.com/vscode/devcontainers/base:ubuntu-22.04
 # Set environment variables
 ENV JAVA_HOME=/opt/java/openjdk
 ENV PATH=$JAVA_HOME/bin:$PATH
+ENV JAVA_VERSION=21
 ENV SBT_VERSION=1.10.6
-ENV SCALA_VERSION=3.7.1
-ENV COURSIER_VERSION=v2.1.18
-
-# Install Java 21
-RUN apt-get update && \
-    apt-get install -y wget curl gpg software-properties-common && \
-    wget -O - https://packages.adoptium.net/artifactory/api/gpg/public/repositories/deb | gpg --dearmor | tee /etc/apt/trusted.gpg.d/adoptium.gpg > /dev/null && \
-    echo "deb https://packages.adoptium.net/artifactory/deb $(awk -F= '/^VERSION_CODENAME/{print$2}' /etc/os-release) main" | tee /etc/apt/sources.list.d/adoptium.list && \
-    apt-get update && \
-    apt-get install -y temurin-21-jdk
+ENV SCALA_VERSION=3.7.2
+ENV SCALA_CLI_VERSION=1.8.4
+ENV BLOOP_VERSION=1.5.10
+ENV METALS_VERSION=0.14.1
 
 # Install build tools and utilities
 RUN apt-get update && apt-get install -y \
@@ -29,36 +24,30 @@ RUN apt-get update && apt-get install -y \
     tree \
     vim \
     nano \
-    zsh \
     fish \
     tmux \
     postgresql-client \
     redis-tools \
     protobuf-compiler \
+    zsh \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Oh My Zsh for better terminal experience
-RUN sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
-RUN chsh -s $(which zsh) vscode
 
-# Install Coursier (Scala package manager)
+# Install Coursier for ARCH of the container
 RUN curl -fL "https://github.com/coursier/launchers/raw/master/cs-x86_64-pc-linux.gz" | gzip -d > /usr/local/bin/cs && \
-    chmod +x /usr/local/bin/cs
+    chmod +x /usr/local/bin/cs && \ 
+    cs install scala:${SCALA_VERSION} scalac:${SCALA_VERSION} scala-cli:${SCALA_CLI_VERSION} scalafmt scalafix sbt
 
-# Install SBT
-RUN curl -fL "https://github.com/sbt/sbt/releases/download/v${SBT_VERSION}/sbt-${SBT_VERSION}.tgz" | tar xz -C /tmp && \
-    mv /tmp/sbt /usr/local/ && \
-    ln -s /usr/local/sbt/bin/sbt /usr/local/bin/sbt
+# Install Oh My Zsh for better terminal experience
+RUN sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended && \
+    chsh -s $(which zsh) vscode && \
+    echo 'export PATH="$HOME/.local/share/coursier/bin:$PATH"' >> ~/.zshrc && \
+    echo 'export PATH="$HOME/.local/share/coursier/bin:$PATH"' >> ~/.bashrc
 
-# Install Scala CLI and other Scala tools via Coursier
-RUN cs install scala:${SCALA_VERSION} && \
-    cs install scalac:${SCALA_VERSION} && \
-    cs install scala-cli && \
-    cs install scalafmt && \
-    cs install scalafix && \
-    cs install ammonite && \
-    cs install bloop && \
-    cs install metals
+RUN for plugin in zsh-autosuggestions zsh-syntax-highlighting zsh-history-substring-search zsh-completions zsh-history-substring-search; do \
+    git clone https://github.com/zsh-users/$plugin.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/$plugin; \
+    omz plugin enable $plugin; \
+    done
 
 # Install Node.js and npm (for frontend development)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
@@ -72,6 +61,7 @@ RUN npm install -g \
     eslint \
     @typescript-eslint/parser \
     @typescript-eslint/eslint-plugin
+    
 
 # Install Docker CLI (for docker-in-docker)
 RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && \
@@ -96,7 +86,7 @@ RUN echo 'export PATH="$HOME/.local/share/coursier/bin:$PATH"' >> ~/.zshrc && \
 # Pre-warm SBT and Scala
 RUN mkdir -p /tmp/warmup && \
     cd /tmp/warmup && \
-    echo 'ThisBuild / scalaVersion := "3.7.1"' > build.sbt && \
+    echo 'ThisBuild / scalaVersion := "${SCALA_VERSION}"' > build.sbt && \
     echo 'libraryDependencies += "dev.zio" %% "zio" % "2.1.17"' >> build.sbt && \
     echo 'object Main extends zio.ZIOAppDefault { def run = zio.Console.printLine("Hello ZIO!") }' > Main.scala && \
     sbt compile && \
