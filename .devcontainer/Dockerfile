@@ -29,25 +29,36 @@ RUN apt-get update && apt-get install -y \
     postgresql-client \
     redis-tools \
     protobuf-compiler \
-    zsh \
     && rm -rf /var/lib/apt/lists/*
 
-
 # Install Coursier for ARCH of the container
-RUN curl -fL "https://github.com/coursier/launchers/raw/master/cs-x86_64-pc-linux.gz" | gzip -d > /usr/local/bin/cs && \
-    chmod +x /usr/local/bin/cs && \ 
-    cs install scala:${SCALA_VERSION} scalac:${SCALA_VERSION} scala-cli:${SCALA_CLI_VERSION} scalafmt scalafix sbt
+RUN if [ "$(uname -m)" = "aarch64" ]; then \
+        curl -fL "https://github.com/coursier/launchers/raw/master/cs-aarch64-pc-linux.gz" | gzip -d > /usr/local/bin/cs; \
+    else \
+        curl -fL "https://github.com/coursier/launchers/raw/master/cs-x86_64-pc-linux.gz" | gzip -d > /usr/local/bin/cs; \
+    fi
+
+
+RUN chmod +x /usr/local/bin/cs && \
+    /usr/local/bin/cs setup -y
 
 # Install Oh My Zsh for better terminal experience
-RUN sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended && \
-    chsh -s $(which zsh) vscode && \
-    echo 'export PATH="$HOME/.local/share/coursier/bin:$PATH"' >> ~/.zshrc && \
-    echo 'export PATH="$HOME/.local/share/coursier/bin:$PATH"' >> ~/.bashrc
+RUN sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+RUN chsh -s $(which zsh) vscode
+RUN echo 'export PATH="$HOME/.local/share/coursier/bin:$PATH"' >> ~/.zshrc
 
-RUN for plugin in zsh-autosuggestions zsh-syntax-highlighting zsh-history-substring-search zsh-completions zsh-history-substring-search; do \
-    git clone https://github.com/zsh-users/$plugin.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/$plugin; \
-    omz plugin enable $plugin; \
-    done
+RUN for plugin in \
+        git \
+        sbt \
+        docker \
+        zsh-autosuggestions \
+        zsh-syntax-highlighting \
+        zsh-history-substring-search \
+        zsh-completions \
+        zsh-history-substring-search; \
+        do git clone https://github.com/zsh-users/$plugin.git \
+        ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/$plugin; \
+        done
 
 # Install Node.js and npm (for frontend development)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
@@ -82,15 +93,6 @@ USER vscode
 # Set up user environment
 RUN echo 'export PATH="$HOME/.local/share/coursier/bin:$PATH"' >> ~/.zshrc && \
     echo 'export PATH="$HOME/.local/share/coursier/bin:$PATH"' >> ~/.bashrc
-
-# Pre-warm SBT and Scala
-RUN mkdir -p /tmp/warmup && \
-    cd /tmp/warmup && \
-    echo 'ThisBuild / scalaVersion := "${SCALA_VERSION}"' > build.sbt && \
-    echo 'libraryDependencies += "dev.zio" %% "zio" % "2.1.17"' >> build.sbt && \
-    echo 'object Main extends zio.ZIOAppDefault { def run = zio.Console.printLine("Hello ZIO!") }' > Main.scala && \
-    sbt compile && \
-    cd / && rm -rf /tmp/warmup
 
 # Set working directory
 WORKDIR /workspace
