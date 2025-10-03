@@ -12,6 +12,8 @@ ThisBuild / organization := "io.quasar"
 
 ThisBuild / testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
 
+ThisBuild / PB.protocVersion := "3.21.12"
+
 inThisBuild(
   List(
     name := "Quasar",
