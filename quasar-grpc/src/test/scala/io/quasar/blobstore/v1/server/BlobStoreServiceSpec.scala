@@ -1,8 +1,10 @@
-package io.quasar.blobstore.v1.server
+package io.quasar.blobstore.v1
+package server
 
-import io.quasar.blobstore.v1.*
+import examples.BlobStoreExample
 
-import io.quasar.api.v1.blobstore.examples.BlobStoreExample
+import blobstore.*
+
 import zio.*
 import zio.test.*
 import zio.test.Assertion.*

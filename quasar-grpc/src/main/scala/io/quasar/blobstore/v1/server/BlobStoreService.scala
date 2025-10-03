@@ -3,9 +3,18 @@ package io.quasar.blobstore.v1.server
 import io.quasar.blobstore.v1.blobstore.*
 import io.grpc.Status
 import zio.*
+import zio.ZIO.ifZIO
 import zio.stream.*
+
 import java.security.MessageDigest
 import scala.collection.concurrent.TrieMap
+import zio.stm.{STM, TMap}
+
+case class StoredBlob(
+  descriptor: BlobDescriptor,
+  data: Chunk[Byte],
+  chunks: List[BlobChunk] = List.empty
+)
 
 /**
  * In-memory implementation of the BlobStore gRPC service.
@@ -14,26 +23,22 @@ import scala.collection.concurrent.TrieMap
  * In production, you would replace the in-memory storage with persistent storage
  * like S3, database, filesystem, etc.
  */
-class BlobStoreService extends ZioBlobstore.BlobStore {
+class BlobStoreService(sessions: TMap[String, UploadSession],
+                       blobs: TMap[String, StoredBlob],
+                       blobMetadata: TMap[String, Map[String, Metadata]]
+                      ) extends ZioBlobstore.BlobStore {
 
-  // In-memory storage - replace with persistent storage in production
-  private val sessions = TrieMap[String, UploadSession]()
-  private val blobs = TrieMap[String, StoredBlob]() // key = hash
-  private val blobMetadata = TrieMap[String, Map[String, Metadata]]() // key = hash
-
-  case class StoredBlob(
-    descriptor: BlobDescriptor,
-    data: Array[Byte],
-    chunks: List[BlobChunk] = List.empty
-  )
 
   // Helper: Create a timestamp from current time
-  private def createTimestamp(): Timestamp = {
-    val currentTimeMillis = java.lang.System.currentTimeMillis()
-    Timestamp(
-      seconds = currentTimeMillis / 1000,
-      nanos = ((currentTimeMillis % 1000) * 1000000).toInt
-    )
+  private def currentTimestamp: UIO[Timestamp] = {
+    Clock.currentDateTime.map { t =>
+      val currentTimeMillis = t.toInstant.toEpochMilli
+      Timestamp(
+        seconds = currentTimeMillis / 1000,
+        nanos = ((currentTimeMillis % 1000) * 1000000).toInt
+      )
+    }
+
   }
 
   override def createUploadSession(
@@ -41,7 +46,7 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
   ): IO[io.grpc.StatusException, CreateUploadSessionResponse] = {
     (for {
       sessionId <- Random.nextUUID.map(_.toString)
-      now = createTimestamp()
+      now <- currentTimestamp
       expiresAt = Timestamp(now.seconds + 3600, now.nanos) // 1 hour from now
       
       session = UploadSession(
@@ -55,11 +60,15 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
       
       _ <- ZIO.succeed(sessions.put(sessionId, session))
       _ <- ZIO.succeed(blobMetadata.put(getBlobKey(request.blob.flatMap(_.canonicalAddress)), request.metadata))
+
+      _ <- STM.atomically {
+        sessions.put(sessionId, session) // Store the session in the map
+      }
       
     } yield CreateUploadSessionResponse(
       CreateUploadSessionResponse.Result.Session(session)
     ))
-    // .catchAll(error => 
+    // .catchAll(error =>
     //   ZIO.succeed(CreateUploadSessionResponse(
     //     CreateUploadSessionResponse.Result.Error(createInternalError(s"Session creation failed: ${error.toString}"))
     //   ))
@@ -69,8 +78,8 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
   override def validateSession(
     request: ValidateSessionRequest
   ): IO[io.grpc.StatusException, ValidateSessionResponse] = {
-    ZIO.attempt {
-      sessions.get(request.sessionId) match {
+    sessions.get(request.sessionId).map {
+      {
         case Some(session) if isSessionValid(session) =>
           ValidateSessionResponse(
             ValidateSessionResponse.Result.Session(session)
@@ -105,7 +114,23 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
           ))
         ))
       } else {
+
         val sessionId = chunks.head.sessionId
+        for {
+          session <- ZSTM.atomically(sessions.get(sessionId).orElseFail(
+            io.grpc.StatusException(Status.NOT_FOUND.withDescription("Session not found"))
+          ))
+          result <- ifZIO(isSessionValid(session))(
+            processUpload(session, chunks.toList),
+            ZIO.succeed(UploadBlobResponse(
+              UploadBlobResponse.Result.Error(createError(
+                ErrorCode.ERROR_CODE_SESSION_EXPIRED,
+                "Session has expired"
+              ))
+            ))
+          )
+        } yield ()
+
         sessions.get(sessionId) match {
           case Some(session) if isSessionValid(session) =>
             processUpload(session, chunks.toList)
@@ -159,31 +184,33 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
   override def getBlobInfo(
     request: GetBlobInfoRequest
   ): IO[io.grpc.StatusException, BlobInfo] = {
-    val blobKey = getBlobKey(request.address)
-    
-    ZIO.attempt {
-      blobs.get(blobKey) match {
-        case Some(storedBlob) =>
-          val metadata = blobMetadata.getOrElse(blobKey, Map.empty)
-          val accessInfo = AccessInfo(
-            lastAccessed = Some(createTimestamp()),
-            accessCount = 1L,
-            accessedBy = Seq(request.principal.map(_.id).getOrElse("unknown"))
-          )
-          
-          BlobInfo(
-            descriptor = Some(storedBlob.descriptor),
-            metadata = metadata,
-            access = Some(accessInfo)
-          )
-        case None =>
-          throw io.grpc.StatusException(Status.NOT_FOUND.withDescription("Blob not found"))
+
+    for {
+      timestamp <- currentTimestamp
+      result <- ZIO.attempt {
+        val blobKey = getBlobKey(request.address)
+        blobs.get(blobKey) match {
+          case Some(storedBlob) =>
+            val metadata = blobMetadata.getOrElse(blobKey, Map.empty)
+            val accessInfo = AccessInfo(
+              lastAccessed = Some(timestamp),
+              accessCount = 1L,
+              accessedBy = Seq(request.principal.map(_.id).getOrElse("unknown"))
+            )
+
+            BlobInfo(
+              descriptor = Some(storedBlob.descriptor),
+              metadata = metadata,
+              access = Some(accessInfo)
+            )
+          case None =>
+            throw io.grpc.StatusException(Status.NOT_FOUND.withDescription("Blob not found"))
+        }
       }
-    }
-    .catchAll(error =>
-      ZIO.fail(io.grpc.StatusException(Status.INTERNAL.withDescription(s"Get blob info failed: ${error.toString}")))
-    )
-  }
+    } yield result
+  }.catchAll(error =>
+    ZIO.fail(io.grpc.StatusException(Status.INTERNAL.withDescription(s"Get blob info failed: ${error.toString}")))
+  )
 
   override def deleteBlob(
     request: DeleteBlobRequest
@@ -292,11 +319,11 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
     maxBlobSizeBytes = 100 * 1024 * 1024L // 100MB
   )
 
-  private def isSessionValid(session: UploadSession): Boolean = {
+  private def isSessionValid(session: UploadSession): UIO[Boolean] = Clock.currentDateTime.map { currentTime =>
     session.state == SessionState.SESSION_STATE_ACTIVE &&
     session.expiresAt.exists { expires =>
-      val now = java.lang.System.currentTimeMillis() / 1000
-      expires.seconds > now
+      val now = currentTime.toEpochSecond
+      expires.seconds >= now
     }
   }
 
@@ -336,6 +363,7 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
           
           val blobKey = getBlobKey(session.expectedBlob.flatMap(_.canonicalAddress))
           blobs.put(blobKey, storedBlob)
+
           
           // Update session state
           val updatedSession = session.copy(state = SessionState.SESSION_STATE_COMPLETED)
@@ -344,7 +372,7 @@ class BlobStoreService extends ZioBlobstore.BlobStore {
           // Create blob info response
           val metadata = blobMetadata.getOrElse(blobKey, Map.empty)
           val accessInfo = AccessInfo(
-            lastAccessed = Some(createTimestamp()),
+            lastAccessed = None,
             accessCount = 1L,
             accessedBy = Seq(session.principal.map(_.id).getOrElse("unknown"))
           )

@@ -42,19 +42,17 @@ message JsonValue {
     JsonStruct struct_value = 5;
     JsonList list_value = 6;
   }
+  enum NullValue {
+    NULL_VALUE = 0;
+  }
+  message JsonStruct {
+    map<string, JsonValue> fields = 1;
+  }
+  message JsonList {
+    repeated JsonValue values = 1;
+  }
 }
 
-enum NullValue {
-  NULL_VALUE = 0;
-}
-
-message JsonStruct {
-  map<string, JsonValue> fields = 1;
-}
-
-message JsonList {
-  repeated JsonValue values = 1;
-}
 
 // Content addressing - the heart of CAS
 message BlobAddress {

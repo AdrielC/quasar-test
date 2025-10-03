@@ -1,4 +1,6 @@
-package io.quasar.blobstore.v1.examples
+package io.quasar.blobstore.v1
+
+package examples
 
 import io.quasar.blobstore.v1.blobstore.*
 import zio.*

@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "timberline-metals": {
+      "url": "http://localhost:54151/sse"
+    }
+  }
+}
