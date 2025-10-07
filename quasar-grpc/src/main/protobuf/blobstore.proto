@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package io.quasar.blobstore.v1;
 
+import "google/protobuf/struct.proto";
+
 option java_multiple_files = true;
 option java_package = "io.quasar.blobstore.v1";
 option java_outer_classname = "BlobStoreProto";
@@ -51,6 +53,17 @@ message JsonValue {
   message JsonList {
     repeated JsonValue values = 1;
   }
+}
+
+// Generic JSON wrappers using Google well-known types. These allow passing
+// arbitrary JSON objects or values without relying on the custom JsonValue
+// structure defined above.
+message JsonObject {
+  google.protobuf.Struct fields = 1;
+}
+
+message Json {
+  google.protobuf.Value value = 1;
 }
 
 
@@ -121,7 +134,7 @@ enum SchemaType {
 // Namespaced metadata with validation
 message Metadata {
   string namespace = 1;                         // Metadata namespace
-  JsonStruct data = 2;                          // JSON metadata
+  google.protobuf.Struct data = 2;              // JSON metadata
   optional Schema schema = 3;                   // Validation schema
   Timestamp updated_at = 4;                     // Last update time
   string updated_by = 5;                        // Who updated it

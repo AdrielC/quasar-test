@@ -97,7 +97,15 @@ lazy val `quasar-grpc` = project
 
       // gRPC / Scalapb
       "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % Version.scalapbVersion,
+      "com.thesamet.scalapb.common-protos" %% "proto-google-common-protos-scalapb_0.11" % "2.9.6-0" % "protobuf",
+      "com.thesamet.scalapb.common-protos" %% "proto-google-common-protos-scalapb_0.11" % "2.9.6-0",
+
+      // scodec
+      "org.scodec" %% "scodec-bits" % "1.2.4",
+
+
       "com.thesamet.scalapb.zio-grpc" %% "zio-grpc-core" % "0.6.3",
+
       "io.grpc" % "grpc-netty" % grpcVersion,
 
       // Logging backend

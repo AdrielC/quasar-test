@@ -8,7 +8,7 @@ import zio.stream.*
 
 import java.security.MessageDigest
 import scala.collection.concurrent.TrieMap
-import zio.stm.{STM, TMap}
+import zio.stm.{STM, TMap, ZSTM}
 
 case class StoredBlob(
   descriptor: BlobDescriptor,
@@ -78,7 +78,7 @@ class BlobStoreService(sessions: TMap[String, UploadSession],
   override def validateSession(
     request: ValidateSessionRequest
   ): IO[io.grpc.StatusException, ValidateSessionResponse] = {
-    sessions.get(request.sessionId).map {
+    ZSTM.atomically(sessions.get(request.sessionId)).map {
       {
         case Some(session) if isSessionValid(session) =>
           ValidateSessionResponse(
@@ -347,7 +347,7 @@ class BlobStoreService(sessions: TMap[String, UploadSession],
         )
       } else {
         // Combine chunk data
-        val combinedData = sortedChunks.flatMap(_.data.toByteArray).toArray
+        val combinedData = sortedChunks.foldLeft(Chunk.empty[Byte]) { (acc, c) => acc ++ Chunk.fromArray(c.data.toByteArray) }
         
         // Validate blob hash
         val actualHash = calculateHash(combinedData, HashAlgorithm.HASH_ALGORITHM_SHA256)
@@ -398,18 +398,18 @@ class BlobStoreService(sessions: TMap[String, UploadSession],
     }
   }
 
-  private def createDownloadChunks(data: Array[Byte], sessionId: String, chunkSize: Int = 64 * 1024): List[BlobChunk] = {
+  private def createDownloadChunks(data: Chunk[Byte], sessionId: String, chunkSize: Int = 64 * 1024): List[BlobChunk] = {
     data.grouped(chunkSize).zipWithIndex.map { case (chunkData, index) =>
       BlobChunk(
         sessionId = sessionId,
         sequenceNumber = index.toLong,
         offsetBytes = (index * chunkSize).toLong,
-        data = com.google.protobuf.ByteString.copyFrom(chunkData),
+        data = com.google.protobuf.ByteString.copyFrom(chunkData.toArray),
         encoding = Some(BlobEncoding(
           compression = CompressionType.COMPRESSION_TYPE_NONE,
           transfer = TransferEncoding.TRANSFER_ENCODING_IDENTITY
         )),
-        checksum = Some(s"sha256:${calculateHash(chunkData, HashAlgorithm.HASH_ALGORITHM_SHA256)}"),
+        checksum = Some(s"sha256:${calculateHash(chunkData.toArray, HashAlgorithm.HASH_ALGORITHM_SHA256)}"),
         flags = Some(ChunkFlags(
           isFinal = (index + 1) * chunkSize >= data.length,
           isCompressed = false,

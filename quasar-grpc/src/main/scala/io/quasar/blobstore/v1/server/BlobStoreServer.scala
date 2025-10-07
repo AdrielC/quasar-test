@@ -1,6 +1,6 @@
 package io.quasar.blobstore.v1.server
 
-import io.quasar.blobstore.v1.blobstore.ZioBlobstore
+import io.quasar.blobstore.v1.blobstore.*
 import scalapb.zio_grpc.ServerMain
 import scalapb.zio_grpc.ServiceList
 import zio.*
@@ -25,7 +25,18 @@ object BlobStoreServer extends ZIOAppDefault {
   val serverConfig = ServerConfig()
 
   // Create the BlobStore service implementation
-  val blobStoreService = new BlobStoreService()
+  val blobStoreService = 
+    Unsafe.unsafe { implicit unsafe =>
+      zio.Runtime.default.unsafe.run {
+      zio.stm.ZSTM.atomically(
+        for {
+          s <- zio.stm.TMap.empty[String, UploadSession]
+          b <- zio.stm.TMap.empty[String, StoredBlob]
+          m <- zio.stm.TMap.empty[String, Map[String, Metadata]]
+        } yield new BlobStoreService(s, b, m)
+      )
+    }.getOrThrowFiberFailure()
+  }
 
   // Server configuration
   val serverLayer: ZLayer[Any, Throwable, io.grpc.Server] =
@@ -85,7 +96,18 @@ object BlobStoreServerMain extends ServerMain {
   
   override def port: Int = 9000
 
-  override def services: ServiceList[Any] = ServiceList.add(new BlobStoreService())
+  override def services: ServiceList[Any] = {
+    val svc = zio.Runtime.default.unsafe.run {
+      zio.stm.ZSTM.atomically(
+        for {
+          s <- zio.stm.TMap.empty[String, UploadSession]
+          b <- zio.stm.TMap.empty[String, StoredBlob]
+          m <- zio.stm.TMap.empty[String, Map[String, Metadata]]
+        } yield new BlobStoreService(s, b, m)
+      )
+    }.getOrThrowFiberFailure()
+    ServiceList.add(svc)
+  }
 
   // Custom server configuration
   def serverBuilder: ZIO[Any, Throwable, ServerBuilder[_]] = {

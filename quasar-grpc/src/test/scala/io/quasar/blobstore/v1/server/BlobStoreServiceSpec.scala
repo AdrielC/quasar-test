@@ -319,6 +319,8 @@ object BlobStoreServiceSpec extends ZIOSpecDefault {
           )
           
           result <- service.getBlobInfo(request).either
+
+          _ <- Console.printLine(result.toString)
           
         } yield assertTrue(
           result.isLeft

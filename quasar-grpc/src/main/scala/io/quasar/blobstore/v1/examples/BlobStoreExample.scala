@@ -3,6 +3,7 @@ package io.quasar.blobstore.v1
 package examples
 
 import io.quasar.blobstore.v1.blobstore.*
+import com.google.protobuf.struct.{Struct, Value, ListValue, NullValue}
 import zio.*
 import zio.stream.*
 
@@ -72,29 +73,27 @@ object BlobStoreExample {
     )
   }
 
-  // Helper: Convert Scala values to JsonValue
-  def toJsonValue(value: Any): JsonValue = value match {
-    case s: String => JsonValue(JsonValue.Kind.StringValue(s))
-    case n: Int => JsonValue(JsonValue.Kind.NumberValue(n.toDouble))
-    case n: Long => JsonValue(JsonValue.Kind.NumberValue(n.toDouble))
-    case n: Double => JsonValue(JsonValue.Kind.NumberValue(n))
-    case b: Boolean => JsonValue(JsonValue.Kind.BoolValue(b))
-    case m: Map[String, Any] @unchecked => 
-      val fields = m.map { case (k, v) => k -> toJsonValue(v) }
-      JsonValue(JsonValue.Kind.StructValue(JsonStruct(fields)))
+  // Helper: Convert Scala values to Google Struct Value
+  private def toGValue(value: Any): Value = value match {
+    case s: String  => Value(Value.Kind.StringValue(s))
+    case n: Int     => Value(Value.Kind.NumberValue(n.toDouble))
+    case n: Long    => Value(Value.Kind.NumberValue(n.toDouble))
+    case n: Double  => Value(Value.Kind.NumberValue(n))
+    case b: Boolean => Value(Value.Kind.BoolValue(b))
+    case m: Map[String, Any] @unchecked =>
+      Value(Value.Kind.StructValue(Struct(m.view.mapValues(toGValue).toMap)))
     case l: List[Any] @unchecked =>
-      JsonValue(JsonValue.Kind.ListValue(JsonList(l.map(toJsonValue))))
-    case null => JsonValue(JsonValue.Kind.NullValue(NullValue.NULL_VALUE))
-    case _ => JsonValue(JsonValue.Kind.StringValue(value.toString))
+      Value(Value.Kind.ListValue(ListValue(l.map(toGValue))))
+    case null => Value(Value.Kind.NullValue(NullValue.NULL_VALUE))
+    case other => Value(Value.Kind.StringValue(other.toString))
   }
 
   // Example: Creating metadata with JSON data
   def createMetadata(namespace: String, data: Map[String, Any]): Metadata = {
-    val jsonStruct = JsonStruct(data.map { case (k, v) => k -> toJsonValue(v) })
-    
+    val struct = Struct(data.view.mapValues(toGValue).toMap)
     Metadata(
       namespace = namespace,
-      data = Some(jsonStruct),
+      data = Some(struct),
       schema = None,
       updatedAt = Some(createTimestamp()),
       updatedBy = "system"
